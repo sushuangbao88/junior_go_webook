@@ -2,6 +2,7 @@ package repository
 
 import (
 	"context"
+	"time"
 
 	"example.com/basic-gin/webook/internal/domain"
 	"example.com/basic-gin/webook/internal/repository/dao"
@@ -36,9 +37,10 @@ func (repo *UserRepository) Update(ctx context.Context, u domain.User) error {
 	}
 
 	du.Nickname = u.Nickname
-	du.Birthday = u.Birthday
+	du.Birthday = u.Birthday.Unix()
 	du.Gender = u.Gender
 	du.Phone = u.Phone
+	du.Profile = u.Profile
 
 	return repo.dao.Update(ctx, du)
 }
@@ -67,8 +69,9 @@ func (repo *UserRepository) toDomain(u dao.User) domain.User {
 		Email:    u.Email,
 		Password: u.Password,
 		Nickname: u.Nickname,
-		Birthday: u.Birthday,
+		Birthday: time.Unix(u.Birthday, 0),
 		Gender:   u.Gender,
 		Phone:    u.Phone,
+		Profile:  u.Profile,
 	}
 }

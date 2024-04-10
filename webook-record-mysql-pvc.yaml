@@ -1,0 +1,14 @@
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: webook-mysql-pvc
+spec:
+  #storageClassName字段使得pvc文件和pv文件关联起来。
+  #pvc（PersistentVolumeClaim）是资源的要求（要求：需要什么）
+  #pv（PersistentVolume）是资源的清单（资源：有什么）
+  storageClassName: record
+  resources:
+    requests:
+      storage: 1Gi
+  accessModes:
+    - ReadWriteOnce

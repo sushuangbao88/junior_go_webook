@@ -71,9 +71,10 @@ type User struct {
 	Email    string `gorm:"unique;size:255;comment:电子邮箱"`
 	Password string `gorm:"size:255;not null;default:'';comment:密码"`
 	Nickname string `gorm:"size:63;not null;default:'';comment:昵称"`
-	Birthday string `gorm:"size:15;not null;default:'';comment:生日"`
+	Birthday int64  `gorm:"not null;default:0;comment:生日"`
 	Gender   int8   `gorm:"type:enum('1', '2');default:1;comment:性别：1，男性；2，女性"`
 	Phone    string `gorm:"size:31;not null;default:'';comment:手机号"`
+	Profile  string `gorm:"size:255;not null;default:'';comment:个人简介"`
 
 	CreateDt int64 `gorm:"not null;default:0;comment:创建时间，毫秒时间戳"`
 	UpdateDt int64 `gorm:"not null;default:0;comment:更新时间，毫秒时间戳"`

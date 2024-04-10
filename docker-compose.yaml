@@ -10,8 +10,15 @@ services:
     volumes:
     #初始化脚本
       - ./script/mysql/:/docker-entrypoint-initdb.d/
-
+      
     ports:
       #外部访问使用3306端口
       - 3306:3306
-    
+
+  redis:
+    image: "bitnami/redis:latest"
+    restart: always
+    environment:
+      - ALLOW_EMPTY_PASSWORD=yes
+    ports:
+      - '6379:6379'

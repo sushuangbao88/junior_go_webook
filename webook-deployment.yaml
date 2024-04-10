@@ -1,0 +1,29 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata: 
+  name: webook-record
+#spec，也就是deployment的规格说明（说明书）
+spec:
+  #Deployment管理的Pod（副本）的数量
+  replicas: 3
+  #筛选器，在k8中，deployment如何识别出自己要管理的Pod
+  selector:
+    #通过匹配标签来识别，所以这里的标签app=webook-record一定要和下面的template进行匹配
+    matchLabels:
+      app: webook-record
+    #创建Pod的模板
+  template: 
+    metadata: 
+      labels:
+        #这个webook-record一定要和前面的selector的matchLabels匹配上
+        app: webook-record
+        #这是Deployment管理的Pod的模板
+    spec:
+      #Pod里面运行的所有container
+      containers:
+        - name: webook-record
+          #使用的镜像
+          image: sushuangbao88/webook:v0.0.1
+          ports:
+            - containerPort: 8080
+

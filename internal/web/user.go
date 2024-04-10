@@ -5,12 +5,14 @@ import (
 	"fmt"
 	"net/http"
 	"time"
+	"unicode/utf8"
 
 	"example.com/basic-gin/webook/internal/domain"
 	"example.com/basic-gin/webook/internal/service"
 	regexp "github.com/dlclark/regexp2"
 	"github.com/gin-contrib/sessions"
 	"github.com/gin-gonic/gin"
+	jwt "github.com/golang-jwt/jwt/v5"
 )
 
 const (
@@ -102,8 +104,13 @@ func (h *UserHandler) Signup(ctx *gin.Context) {
 	ctx.String(http.StatusOK, "注册成功")
 }
 
-// 登陆
 func (h *UserHandler) Login(ctx *gin.Context) {
+	//h.loginSession(ctx)
+	h.loginJWT(ctx)
+}
+
+// 登陆(session实现方式)
+func (h *UserHandler) loginSession(ctx *gin.Context) {
 	type LoginReq struct {
 		Email    string `json:"email"`
 		Password string `json:"password"`
@@ -121,7 +128,7 @@ func (h *UserHandler) Login(ctx *gin.Context) {
 		sess := sessions.Default(ctx)
 		sess.Set("userId", u.Id)
 		sess.Options(sessions.Options{
-			MaxAge: 15 * int(time.Minute),
+			MaxAge: 900,
 		})
 		err = sess.Save()
 		if err != nil {
@@ -136,13 +143,46 @@ func (h *UserHandler) Login(ctx *gin.Context) {
 	}
 }
 
-// 个人信息
-func (h *UserHandler) Profile(ctx *gin.Context) {
-	uid, err := h.getUidBySession(ctx)
-	if err != nil {
-		ctx.String(http.StatusInternalServerError, "系统错误") //通过了登陆中间件的校验，但是咩有获取到uid>>系统错误
+// 登陆(jwt实现方式)
+func (h *UserHandler) loginJWT(ctx *gin.Context) {
+	type LoginReq struct {
+		Email    string `json:"email"`
+		Password string `json:"password"`
+	}
+	var req LoginReq
+	if err := ctx.Bind(&req); err != nil {
+		ctx.String(http.StatusOK, "")
 		return
 	}
+
+	u, err := h.svc.Login(ctx, req.Email, req.Password)
+	switch err {
+	case nil:
+		//登陆成功
+		uc := UserClaims{
+			Uid: u.Id,
+			RegisteredClaims: jwt.RegisteredClaims{
+				ExpiresAt: jwt.NewNumericDate(time.Now().Add(time.Minute * 30)),
+			},
+		}
+		token := jwt.NewWithClaims(jwt.SigningMethodHS512, uc)
+		tokenStr, err := token.SignedString(JWTKey)
+		if err != nil {
+			ctx.String(http.StatusOK, "系统错误")
+		}
+		ctx.Header("x-jwt-token", tokenStr)
+		ctx.String(http.StatusOK, "登陆成功")
+	case service.ErrInvalidUserOrPassword:
+		ctx.String(http.StatusOK, "用户名或者密码不正确")
+	default:
+		ctx.String(http.StatusOK, "系统错误")
+	}
+}
+
+// 个人信息
+func (h *UserHandler) Profile(ctx *gin.Context) {
+	uid, err := h.getUidByJWT(ctx) // JWT方式获取uid
+	//uid, err := h.getUidBySession(ctx) // seesion方式，获取uid
 
 	u, err := h.svc.Profile(ctx, uid)
 	if err != nil {
@@ -156,14 +196,16 @@ func (h *UserHandler) Profile(ctx *gin.Context) {
 		Birthday string `json:"birthday"`
 		Gender   int8   `json:"gender"`
 		Phone    string `json:"phone"`
+		Profile  string `json:"profile"`
 	}
 
 	ctx.JSON(http.StatusOK, Profile{
 		Email:    u.Email,
 		Nickname: u.Nickname,
-		Birthday: u.Birthday,
+		Birthday: u.Birthday.Format("2006-01-02"),
 		Gender:   u.Gender,
 		Phone:    u.Phone,
+		Profile:  u.Profile,
 	})
 }
 
@@ -180,6 +222,7 @@ func (h *UserHandler) Edit(ctx *gin.Context) {
 		Birthday string `json:"birthday"`
 		Gender   int8   `json:"gender"`
 		Phone    string `json:"phone"`
+		Profile  string `json:"profile"`
 	}
 	var req EditReq
 	if err := ctx.Bind(&req); err != nil {
@@ -198,14 +241,10 @@ func (h *UserHandler) Edit(ctx *gin.Context) {
 			return
 		}
 	}
-
+	var birthday time.Time
 	if req.Birthday != "" {
-		isDate, err := h.dateRegexExp.MatchString(req.Birthday)
+		birthday, err = time.Parse(time.DateOnly, req.Birthday)
 		if err != nil {
-			ctx.String(http.StatusOK, "系统错误")
-			return
-		}
-		if !isDate {
 			ctx.String(http.StatusOK, "生日格式不正确")
 			return
 		}
@@ -219,18 +258,24 @@ func (h *UserHandler) Edit(ctx *gin.Context) {
 		}
 	}
 
+	if utf8.RuneCountInString(req.Profile) > 144 {
+		ctx.String(http.StatusOK, "[个人简介]长度超过144")
+		return
+	}
+
 	err = h.svc.Edit(ctx, domain.User{
 		Id:       uid,
 		Nickname: req.Nickname,
-		Birthday: req.Birthday,
+		Birthday: birthday,
 		Gender:   req.Gender,
 		Phone:    req.Phone,
+		Profile:  req.Profile,
 	})
 	if err != nil {
 		ctx.String(http.StatusOK, "更新个人信息失败")
 	}
 
-	ctx.String(http.StatusOK, "修改成功")
+	ctx.String(http.StatusOK, "修改成功！")
 }
 
 func (h *UserHandler) getUidBySession(ctx *gin.Context) (int64, error) {
@@ -242,4 +287,16 @@ func (h *UserHandler) getUidBySession(ctx *gin.Context) (int64, error) {
 	}
 
 	return uid, nil
+}
+
+func (h *UserHandler) getUidByJWT(ctx *gin.Context) (int64, error) {
+	uc := ctx.MustGet("user").(UserClaims)
+	return uc.Uid, nil
+}
+
+var JWTKey = []byte("iCoQ2OW9hl6N1eU7b0tXhrZr4ETOhwAI")
+
+type UserClaims struct {
+	jwt.RegisteredClaims
+	Uid int64
 }
