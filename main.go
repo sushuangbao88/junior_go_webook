@@ -1,35 +1,36 @@
 package main
 
 import (
-	"net/http"
 	"strings"
 	"time"
 
 	"example.com/basic-gin/webook/internal/repository"
+	"example.com/basic-gin/webook/internal/repository/cache"
 	"example.com/basic-gin/webook/internal/repository/dao"
 	"example.com/basic-gin/webook/internal/service"
+	"example.com/basic-gin/webook/internal/service/sms"
 	"example.com/basic-gin/webook/internal/web"
 	"example.com/basic-gin/webook/internal/web/middleware"
+	"example.com/basic-gin/webook/pkg/ginx/middleware/ratelimit"
+	"example.com/basic-gin/webook/pkg/limiter"
 	"github.com/gin-contrib/cors"
 	"github.com/gin-contrib/sessions"
 	"github.com/gin-contrib/sessions/redis"
 	"github.com/gin-gonic/gin"
+	goRedis "github.com/redis/go-redis/v9"
 	"gorm.io/driver/mysql"
 	"gorm.io/gorm"
 )
 
 func main() {
-	/*
-		db := initDB()
-		dao.InitTables(db) //自动建表
-		server := initWebServer()
-		//(分散式)注册(初始化)「用户」路由
-		initRegisterUserHandler(db, server)
-	*/
-	server := gin.Default()
-	server.GET("/hello", func(ctx *gin.Context) {
-		ctx.String(http.StatusOK, "你好！欢迎使k8s")
-	})
+	db := initDB()
+	rdb := initRedisClient()
+
+	dao.InitTables(db) //自动建表
+	server := initWebServer(rdb)
+	//(分散式)注册(初始化)「用户」路由
+	initRegisterUserHandler(db, server, rdb)
+
 	server.Run(":8080")
 }
 
@@ -47,7 +48,15 @@ func initDB() *gorm.DB {
 	return db
 }
 
-func initWebServer() *gin.Engine {
+func initRedisClient() *goRedis.Client {
+	return goRedis.NewClient(&goRedis.Options{
+		Addr:     "localhost:6379",
+		Password: "",
+		DB:       0,
+	})
+}
+
+func initWebServer(rdb *goRedis.Client) *gin.Engine {
 	server := gin.Default()
 
 	//中间件的可以去仓库：https://github.com/gin-gonic/contrib 中去查看
@@ -67,17 +76,27 @@ func initWebServer() *gin.Engine {
 		MaxAge: 12 * time.Hour,
 	}))
 
+	//限流中间件
+	/* 因为要要使用压测，暂时先限流一下*/
+	rswLimiter := limiter.NewRedisSlidingWindowLimiter(rdb, time.Second, 1)
+	server.Use(ratelimit.NewBuilder(rswLimiter).Build())
+
 	//useSession(server) //用户校验：session
 	useJWT(server) //用户校验：JWT
 
 	return server
 }
 
-func initRegisterUserHandler(db *gorm.DB, server *gin.Engine) {
+func initRegisterUserHandler(db *gorm.DB, server *gin.Engine, rdb *goRedis.Client) {
 	ud := dao.NewUserDAO(db)
 	ur := repository.NewUserRepository(ud)
 	us := service.NewUserService(ur)
-	hdl := web.NewUserHandler(us)
+
+	cc := cache.NewCodeRedisCache(rdb)
+	cr := repository.NewCodeRepository(cc)
+	ss := sms.NewService("local")
+	cs := service.NewCodeService(cr, ss)
+	hdl := web.NewUserHandler(us, cs)
 
 	hdl.RegisterRoutes(server) //注册“用户”路由
 }

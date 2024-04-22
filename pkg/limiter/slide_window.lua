@@ -3,7 +3,7 @@
 -- 7 执行完之后
 
 -- 限流对象
-local key = KEY[1]
+local key = KEYS[1]
 
 -- 窗口大小
 local window = tonumber(ARGV[1])

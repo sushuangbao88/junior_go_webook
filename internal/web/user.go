@@ -30,15 +30,17 @@ type UserHandler struct {
 	phoneRegexExp    *regexp.Regexp
 	dateRegexExp     *regexp.Regexp
 	svc              *service.UserService
+	codeSvc          *service.CodeService
 }
 
-func NewUserHandler(svc *service.UserService) *UserHandler {
+func NewUserHandler(svc *service.UserService, codeSvc *service.CodeService) *UserHandler {
 	return &UserHandler{
 		emailRegexExp:    regexp.MustCompile(emailRegexPattern, regexp.None),
 		passwordRegexExp: regexp.MustCompile(passwordRegexPattern, regexp.None),
 		phoneRegexExp:    regexp.MustCompile(phoneRegexPattern, regexp.None),
 		dateRegexExp:     regexp.MustCompile(dateRegexPattern, regexp.None),
 		svc:              svc,
+		codeSvc:          codeSvc,
 	}
 }
 
@@ -51,6 +53,8 @@ func (h *UserHandler) RegisterRoutes(server *gin.Engine) {
 	ug.POST("/login", h.Login)
 	ug.POST("/edit", h.Edit)
 	ug.GET("/profile", h.Profile)
+	ug.POST("/login_sms/code/send", h.SendSMSLoginCode)
+	ug.POST("/login_sms", h.LoginSMS)
 }
 
 // 注册
@@ -66,14 +70,13 @@ func (h *UserHandler) Signup(ctx *gin.Context) {
 		fmt.Printf("error: %v", err)
 		return //报错
 	}
-
 	isEmail, err := h.emailRegexExp.MatchString(req.Email)
 	if err != nil {
 		ctx.String(http.StatusOK, "系统错误")
 		return
 	}
 	if !isEmail {
-		ctx.String(http.StatusOK, "非法有想格式")
+		ctx.String(http.StatusOK, "非法邮箱格式")
 		return
 	}
 
@@ -125,17 +128,7 @@ func (h *UserHandler) loginSession(ctx *gin.Context) {
 	switch err {
 	case nil:
 		//登陆成功
-		sess := sessions.Default(ctx)
-		sess.Set("userId", u.Id)
-		sess.Options(sessions.Options{
-			MaxAge: 900,
-		})
-		err = sess.Save()
-		if err != nil {
-			ctx.String(http.StatusOK, "系统错误")
-			return
-		}
-		ctx.String(http.StatusOK, "登陆成功")
+		h.loginSuccessSession(ctx, u)
 	case service.ErrInvalidUserOrPassword:
 		ctx.String(http.StatusOK, "用户名或者密码不正确")
 	default:
@@ -159,19 +152,7 @@ func (h *UserHandler) loginJWT(ctx *gin.Context) {
 	switch err {
 	case nil:
 		//登陆成功
-		uc := UserClaims{
-			Uid: u.Id,
-			RegisteredClaims: jwt.RegisteredClaims{
-				ExpiresAt: jwt.NewNumericDate(time.Now().Add(time.Minute * 30)),
-			},
-		}
-		token := jwt.NewWithClaims(jwt.SigningMethodHS512, uc)
-		tokenStr, err := token.SignedString(JWTKey)
-		if err != nil {
-			ctx.String(http.StatusOK, "系统错误")
-		}
-		ctx.Header("x-jwt-token", tokenStr)
-		ctx.String(http.StatusOK, "登陆成功")
+		h.loginSuccessJWT(ctx, u)
 	case service.ErrInvalidUserOrPassword:
 		ctx.String(http.StatusOK, "用户名或者密码不正确")
 	default:
@@ -181,8 +162,8 @@ func (h *UserHandler) loginJWT(ctx *gin.Context) {
 
 // 个人信息
 func (h *UserHandler) Profile(ctx *gin.Context) {
-	uid, err := h.getUidByJWT(ctx) // JWT方式获取uid
-	//uid, err := h.getUidBySession(ctx) // seesion方式，获取uid
+	uid, _ := h.getUidByJWT(ctx) // JWT方式获取uid
+	//uid, _ := h.getUidBySession(ctx) // seesion方式，获取uid
 
 	u, err := h.svc.Profile(ctx, uid)
 	if err != nil {
@@ -276,6 +257,92 @@ func (h *UserHandler) Edit(ctx *gin.Context) {
 	}
 
 	ctx.String(http.StatusOK, "修改成功！")
+}
+
+// 发送登陆短信验证码
+func (h *UserHandler) SendSMSLoginCode(ctx *gin.Context) {
+	type Req struct {
+		Phone string `json:"phone"`
+	}
+	var req Req
+	if err := ctx.Bind(&req); err != nil {
+		ctx.String(http.StatusOK, "参数丢失")
+	}
+	fmt.Printf("%v", req)
+	ok, _ := h.phoneRegexExp.MatchString(req.Phone)
+	if !ok {
+		ctx.String(http.StatusOK, "手机格式不正确")
+	}
+
+	//发送验证码
+	err := h.codeSvc.Set(ctx, "login", req.Phone)
+	if err != nil {
+		ctx.String(http.StatusOK, "验证码发送失败："+err.Error())
+	}
+
+	ctx.String(http.StatusOK, "验证码发送成功")
+}
+
+// 短信验证登陆
+func (h *UserHandler) LoginSMS(ctx *gin.Context) {
+	type Req struct {
+		Phone string `json:"phone"`
+		Code  string `json:"code"`
+	}
+	var req Req
+	if err := ctx.Bind(&req); err != nil {
+		ctx.String(http.StatusOK, "参数丢失")
+	}
+
+	//校验短线验证码，登陆
+	ok, err := h.codeSvc.Verify(ctx, "login", req.Phone, req.Code)
+	if err != nil {
+		ctx.String(http.StatusOK, "系统错误："+err.Error())
+	}
+
+	if !ok {
+		ctx.String(http.StatusOK, "验证不正确")
+	}
+
+	//ctx.String(http.StatusOK, "验证正确")
+	//验证通过，处理登陆事宜，phone的登陆或者注册
+	u, err := h.svc.FindOrCreateByPhone(ctx, req.Phone)
+	if err != nil {
+		ctx.String(http.StatusOK, "系统错误："+err.Error())
+	}
+	h.loginSuccessJWT(ctx, u)
+}
+
+// 登陆成功的处理：JWT方式
+func (h *UserHandler) loginSuccessJWT(ctx *gin.Context, u domain.User) {
+	uc := UserClaims{
+		Uid: u.Id,
+		RegisteredClaims: jwt.RegisteredClaims{
+			ExpiresAt: jwt.NewNumericDate(time.Now().Add(time.Minute * 30)),
+		},
+	}
+	token := jwt.NewWithClaims(jwt.SigningMethodHS512, uc)
+	tokenStr, err := token.SignedString(JWTKey)
+	if err != nil {
+		ctx.String(http.StatusOK, "系统错误")
+	}
+	ctx.Header("x-jwt-token", tokenStr)
+	ctx.String(http.StatusOK, "登陆成功")
+}
+
+// 登陆成功的处理：Session方式
+func (h *UserHandler) loginSuccessSession(ctx *gin.Context, u domain.User) {
+	sess := sessions.Default(ctx)
+	sess.Set("userId", u.Id)
+	sess.Options(sessions.Options{
+		MaxAge: 900,
+	})
+	err := sess.Save()
+	if err != nil {
+		ctx.String(http.StatusOK, "系统错误")
+		return
+	}
+	ctx.String(http.StatusOK, "登陆成功")
 }
 
 func (h *UserHandler) getUidBySession(ctx *gin.Context) (int64, error) {

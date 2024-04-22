@@ -2,11 +2,13 @@ package limiter
 
 import (
 	"context"
+	_ "embed"
 	"time"
 
 	"github.com/redis/go-redis/v9"
 )
 
+//go:embed slide_window.lua
 var luaScript string
 
 type RedisSlidingWindowLimiter struct {

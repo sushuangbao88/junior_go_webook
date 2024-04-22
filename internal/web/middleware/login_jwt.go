@@ -1,7 +1,6 @@
 package middleware
 
 import (
-	"log"
 	"net/http"
 	"strings"
 	"time"
@@ -17,7 +16,10 @@ type LoginJWTMiddlewareBuilder struct {
 func (m *LoginJWTMiddlewareBuilder) CheckLogin() gin.HandlerFunc {
 	return func(ctx *gin.Context) {
 		path := ctx.Request.URL.Path
-		if path == "/users/signup" || path == "/users/login" {
+		if path == "/users/signup" ||
+			path == "/users/login" ||
+			path == "/users/login_sms/code/send" ||
+			path == "/users/login_sms" {
 			//注册和登录是不需要交校验的
 			return
 		}
@@ -52,12 +54,12 @@ func (m *LoginJWTMiddlewareBuilder) CheckLogin() gin.HandlerFunc {
 		}
 
 		expireTime := uc.ExpiresAt
-		if expireTime.Sub(time.Now()) < time.Minute*10 {
+		if time.Until(expireTime.Time) < time.Minute*10 {
 			//token有效时间是30min，如果在10min之内就要过期，则刷新过期时间
 			uc.ExpiresAt = jwt.NewNumericDate(time.Now().Add(time.Minute * 30))
 			tokenStr, err = token.SignedString(web.JWTKey)
 			if err != nil {
-				log.Println(err)
+				//log.Println(err)
 			} else {
 				ctx.Header("x-jwt-token", tokenStr)
 			}
