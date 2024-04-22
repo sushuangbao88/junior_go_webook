@@ -1,3 +1,12 @@
+#第三周作业：<br/>
+k8s启动情况：<br/>
+<img width="885" alt="image" src="https://github.com/sushuangbao88/junior_go_webook/assets/162780219/965e0644-5789-4765-8e05-ccdb72337d66">
+<br/>
+服务端口更改情况：<br/>
+<img width="364" alt="image" src="https://github.com/sushuangbao88/junior_go_webook/assets/162780219/a60fb010-5a77-49b2-a782-e52842425e2c">
+<br/>
+
+#第二周作业：<br/>
 1、注册:<br/>
 <img width="805" alt="image" src="https://github.com/sushuangbao88/junior_go_webook/assets/162780219/0bfe89ab-720e-4dd4-ac07-c2a186c0837f">
 <br/>
